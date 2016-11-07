@@ -11,6 +11,28 @@
 
 using namespace std;
 
+
+/*********************************************************************************************************/
+
+VkResult CreateDebugReportCallbackEXT(VkInstance instance, const VkDebugReportCallbackCreateInfoEXT* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkDebugReportCallbackEXT* pCallback) {
+    auto func = (PFN_vkCreateDebugReportCallbackEXT) vkGetInstanceProcAddr(instance, "vkCreateDebugReportCallbackEXT");
+    if (func != nullptr) {
+        return func(instance, pCreateInfo, pAllocator, pCallback);
+    } else {
+        return VK_ERROR_EXTENSION_NOT_PRESENT;
+    }
+}
+
+void DestroyDebugReportCallbackEXT(VkInstance instance, VkDebugReportCallbackEXT callback, const VkAllocationCallbacks* pAllocator) {
+    auto func = (PFN_vkDestroyDebugReportCallbackEXT) vkGetInstanceProcAddr(instance, "vkDestroyDebugReportCallbackEXT");
+    if (func != nullptr) {
+        func(instance, callback, pAllocator);
+    }
+}
+
+/*********************************************************************************************************/
+
+
 class HelloTriangleApplication {
 public:
     const int WIDTH = 800;
@@ -35,7 +57,8 @@ public:
 
 private:
     GLFWwindow* window;
-    VDeleter<VkInstance> instance {vkDestroyInstance};
+    VDeleter<VkInstance> instance{vkDestroyInstance};
+    VDeleter<VkDebugReportCallbackEXT> callback{instance, DestroyDebugReportCallbackEXT};
 
     /**
      * Stuff that's required to get a valid window on the screen.
@@ -59,20 +82,22 @@ private:
     void initVulkan() {
         cout << "Starting Vulkan initialisation..." << endl;
         createInstance();
+        setupDebugCallback();
     }
+
 
     void createInstance() {
         cout << "Creating Vulkan instance..." << endl;
 
         /** First we want to check if validation layers are available */
         if (enableValidationLayers && !checkValidationLayerSupport()) {
-            throw runtime_error("validation layers requested, but not available!");
+            throw std::runtime_error("validation layers requested, but not available!");
         }
 
         /** Create a Vk application info*/
         VkApplicationInfo appInfo = {};
         appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-        appInfo.pApplicationName = "VK Play";
+        appInfo.pApplicationName = "VkPlay";
         appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
         appInfo.pEngineName = "No Engine";
         appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
@@ -83,16 +108,10 @@ private:
         createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
         createInfo.pApplicationInfo = &appInfo;
 
-        /** Prepare GLFW context for Vk drawing */
-        unsigned int glfwExtensionCount = 0;
-        const char** glfwExtensions;
-
-        /** Get the draw extention for the instance */
-        glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
-
-        /** Assign the data for us to use */
-        createInfo.enabledExtensionCount = glfwExtensionCount;
-        createInfo.ppEnabledExtensionNames = glfwExtensions;
+        /** Get required extentions */
+        auto extensions = getRequiredExtensions();
+        createInfo.enabledExtensionCount = extensions.size();
+        createInfo.ppEnabledExtensionNames = extensions.data();
 
         /** Setup validation layers for the creat info struct */
         if (enableValidationLayers) {
@@ -102,36 +121,40 @@ private:
             createInfo.enabledLayerCount = 0;
         }
 
-        /** Probe for extentions count */
-        uint32_t extensionCount = 0;
-        vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, nullptr);
-
-        /** Fill a vector with available extentions */
-        vector<VkExtensionProperties> extensions(extensionCount);
-        vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, extensions.data());
-
-        /** Print available extentions */
-        cout << "Available Vk Extensions:" << endl;
-        for (const auto& extension : extensions) {
-            cout << "\t" << extension.extensionName << endl;
+        /** Finally attempt to create a Vk Instance... */
+        if (vkCreateInstance(&createInfo, nullptr, instance.replace()) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create instance!");
         }
 
-        /** Attempt to create a new VKInstance */
-        if (vkCreateInstance(&createInfo, nullptr, instance.replace()) != VK_SUCCESS) {
-            throw runtime_error("failed to create instance!");
+    }
+
+
+    void setupDebugCallback() {
+        if (!enableValidationLayers) return;
+
+        VkDebugReportCallbackCreateInfoEXT createInfo = {};
+        createInfo.sType = VK_STRUCTURE_TYPE_DEBUG_REPORT_CALLBACK_CREATE_INFO_EXT;
+        createInfo.flags = VK_DEBUG_REPORT_ERROR_BIT_EXT | VK_DEBUG_REPORT_WARNING_BIT_EXT;
+        createInfo.pfnCallback = debugCallback;
+
+        if (CreateDebugReportCallbackEXT(instance, &createInfo, nullptr, callback.replace()) != VK_SUCCESS) {
+            throw std::runtime_error("failed to set up debug callback!");
         }
     }
 
 
-    vector<const char*> getRequiredExtensions() {
-        vector<const char*> extensions;
+    std::vector<const char*> getRequiredExtensions() {
+        std::vector<const char*> extensions;
 
         unsigned int glfwExtensionCount = 0;
         const char** glfwExtensions;
         glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
 
+        cout << "Available GLFW extensions: " << endl;
+
         for (unsigned int i = 0; i < glfwExtensionCount; i++) {
             extensions.push_back(glfwExtensions[i]);
+            cout << "\t" << glfwExtensions[i] << endl;
         }
 
         if (enableValidationLayers) {
@@ -146,7 +169,7 @@ private:
         uint32_t layerCount;
         vkEnumerateInstanceLayerProperties(&layerCount, nullptr);
 
-        vector<VkLayerProperties> availableLayers(layerCount);
+        std::vector<VkLayerProperties> availableLayers(layerCount);
         vkEnumerateInstanceLayerProperties(&layerCount, availableLayers.data());
 
         for (const char* layerName : validationLayers) {
@@ -168,6 +191,24 @@ private:
     }
 
 
+    static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(VkDebugReportFlagsEXT flags, 
+                                                            VkDebugReportObjectTypeEXT objType,
+                                                            uint64_t obj,
+                                                            size_t location,
+                                                            int32_t code,
+                                                            const char* layerPrefix,
+                                                            const char* msg,
+                                                            void* userData) {
+
+        std::cerr << "validation layer: " << msg << std::endl;
+        return VK_FALSE;
+    }
+
+
+    /*******************************************************************************************************
+     *******************************************************************************************************
+     *******************************************************************************************************/
+
     void mainLoop() {
         while (!glfwWindowShouldClose(window)) {
             glfwPollEvents();
@@ -188,3 +229,4 @@ int main() {
 
     return EXIT_SUCCESS;
 }
+
