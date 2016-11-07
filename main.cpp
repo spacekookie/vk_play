@@ -9,12 +9,14 @@
 
 #include "vk_deleter.h"
 
+using namespace std;
+
 class HelloTriangleApplication {
 public:
     const int WIDTH = 800;
     const int HEIGHT = 600;
 
-    const std::vector<const char*> validationLayers = {
+    const vector<const char*> validationLayers = {
         "VK_LAYER_LUNARG_standard_validation"
     };
 
@@ -42,7 +44,7 @@ private:
      *
      */
     void initWindow() {
-        std::cout << "Initialising GLFW window context..." << std::endl;
+        cout << "Initialising GLFW window context..." << endl;
         glfwInit();
 
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
@@ -55,16 +57,16 @@ private:
      * Actual Vulkan API initialisation
      */
     void initVulkan() {
-        std::cout << "Starting Vulkan initialisation..." << std::endl;
+        cout << "Starting Vulkan initialisation..." << endl;
         createInstance();
     }
 
     void createInstance() {
-        std::cout << "Creating Vulkan instance..." << std::endl;
+        cout << "Creating Vulkan instance..." << endl;
 
         /** First we want to check if validation layers are available */
         if (enableValidationLayers && !checkValidationLayerSupport()) {
-            throw std::runtime_error("validation layers requested, but not available!");
+            throw runtime_error("validation layers requested, but not available!");
         }
 
         /** Create a Vk application info*/
@@ -92,24 +94,51 @@ private:
         createInfo.enabledExtensionCount = glfwExtensionCount;
         createInfo.ppEnabledExtensionNames = glfwExtensions;
 
+        /** Setup validation layers for the creat info struct */
+        if (enableValidationLayers) {
+            createInfo.enabledLayerCount = validationLayers.size();
+            createInfo.ppEnabledLayerNames = validationLayers.data();
+        } else {
+            createInfo.enabledLayerCount = 0;
+        }
+
         /** Probe for extentions count */
         uint32_t extensionCount = 0;
         vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, nullptr);
 
         /** Fill a vector with available extentions */
-        std::vector<VkExtensionProperties> extensions(extensionCount);
+        vector<VkExtensionProperties> extensions(extensionCount);
         vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, extensions.data());
 
         /** Print available extentions */
-        std::cout << "Available Vk Extensions:" << std::endl;
+        cout << "Available Vk Extensions:" << endl;
         for (const auto& extension : extensions) {
-            std::cout << "\t> " << extension.extensionName << std::endl;
+            cout << "\t" << extension.extensionName << endl;
         }
 
         /** Attempt to create a new VKInstance */
         if (vkCreateInstance(&createInfo, nullptr, instance.replace()) != VK_SUCCESS) {
-            throw std::runtime_error("failed to create instance!");
+            throw runtime_error("failed to create instance!");
         }
+    }
+
+
+    vector<const char*> getRequiredExtensions() {
+        vector<const char*> extensions;
+
+        unsigned int glfwExtensionCount = 0;
+        const char** glfwExtensions;
+        glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
+
+        for (unsigned int i = 0; i < glfwExtensionCount; i++) {
+            extensions.push_back(glfwExtensions[i]);
+        }
+
+        if (enableValidationLayers) {
+            extensions.push_back(VK_EXT_DEBUG_REPORT_EXTENSION_NAME);
+        }
+
+        return extensions;
     }
 
 
@@ -117,7 +146,7 @@ private:
         uint32_t layerCount;
         vkEnumerateInstanceLayerProperties(&layerCount, nullptr);
 
-        std::vector<VkLayerProperties> availableLayers(layerCount);
+        vector<VkLayerProperties> availableLayers(layerCount);
         vkEnumerateInstanceLayerProperties(&layerCount, availableLayers.data());
 
         for (const char* layerName : validationLayers) {
@@ -148,12 +177,12 @@ private:
 
 int main() {
     HelloTriangleApplication app;
-    std::cout << "Starting VkPlay..." << std::endl;
+    cout << "Starting VkPlay..." << endl;
 
     try {
         app.run();
-    } catch (const std::runtime_error& e) {
-        std::cerr << e.what() << std::endl;
+    } catch (const runtime_error& e) {
+        cerr << e.what() << endl;
         return EXIT_FAILURE;
     }
 
