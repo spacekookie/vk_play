@@ -6,6 +6,7 @@
 #include <iostream>
 #include <vector>
 #include <cstring>
+#include <set>
 
 #include "vk_deleter.h"
 
@@ -34,12 +35,12 @@ void DestroyDebugReportCallbackEXT(VkInstance instance, VkDebugReportCallbackEXT
 
 struct QueueFamilyIndices {
     int graphicsFamily = -1;
+    int presentFamily = -1;
 
     bool isComplete() {
-        return graphicsFamily >= 0;
+        return graphicsFamily >= 0 && presentFamily >= 0;
     }
 };
-
 /*********************************************************************************************************/
 
 
@@ -51,6 +52,11 @@ public:
     const vector<const char*> validationLayers = {
         "VK_LAYER_LUNARG_standard_validation"
     };
+
+    const std::vector<const char*> deviceExtensions = {
+        VK_KHR_SWAPCHAIN_EXTENSION_NAME
+    };
+
 
     #ifdef NDEBUG
         const bool enableValidationLayers = false;
@@ -70,10 +76,17 @@ private:
     
     /** Vk Deleters to clean up after ourselves if we fail with something */
     VDeleter<VkInstance> instance{vkDestroyInstance};
+    VDeleter<VkDevice> device{vkDestroyDevice};
+    VDeleter<VkSurfaceKHR> surface{instance, vkDestroySurfaceKHR};
+
     VDeleter<VkDebugReportCallbackEXT> callback{instance, DestroyDebugReportCallbackEXT};
     
     /** Implicitly destroyed when the instance is destroyed */
     VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
+
+    VkQueue graphicsQueue;
+    VkQueue presentQueue;
+
 
     /**
      * Stuff that's required to get a valid window on the screen.
@@ -98,7 +111,53 @@ private:
         cout << "Starting Vulkan initialisation..." << endl;
         createInstance();
         setupDebugCallback();
+        createSurface();
         pickPhysicalDevice();
+        createLogicalDevice();
+    }
+
+
+     void createLogicalDevice() {
+        QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
+
+        vector<VkDeviceQueueCreateInfo> queueCreateInfos;
+        set<int> uniqueQueueFamilies = {indices.graphicsFamily, indices.presentFamily};
+
+        float queuePriority = 1.0f;
+        for (int queueFamily : uniqueQueueFamilies) {
+            VkDeviceQueueCreateInfo queueCreateInfo = {};
+            queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+            queueCreateInfo.queueFamilyIndex = queueFamily;
+            queueCreateInfo.queueCount = 1;
+            queueCreateInfo.pQueuePriorities = &queuePriority;
+            queueCreateInfos.push_back(queueCreateInfo);
+        }
+
+        VkPhysicalDeviceFeatures deviceFeatures = {};
+
+        VkDeviceCreateInfo createInfo = {};
+        createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+
+        createInfo.pQueueCreateInfos = queueCreateInfos.data();
+        createInfo.queueCreateInfoCount = (uint32_t) queueCreateInfos.size();
+
+        createInfo.pEnabledFeatures = &deviceFeatures;
+
+        createInfo.enabledExtensionCount = 0;
+        
+        if (enableValidationLayers) {
+            createInfo.enabledLayerCount = validationLayers.size();
+            createInfo.ppEnabledLayerNames = validationLayers.data();
+        } else {
+            createInfo.enabledLayerCount = 0;
+        }
+
+        if (vkCreateDevice(physicalDevice, &createInfo, nullptr, device.replace()) != VK_SUCCESS) {
+            throw runtime_error("failed to create logical device!");
+        }
+
+        vkGetDeviceQueue(device, indices.graphicsFamily, 0, &graphicsQueue);
+        vkGetDeviceQueue(device, indices.presentFamily, 0, &presentQueue);
     }
 
 
@@ -110,11 +169,11 @@ private:
 
         /** If there is none, there is no point to continue... */
         if (deviceCount == 0) {
-            throw std::runtime_error("failed to find GPUs with Vulkan support!");
+            throw runtime_error("failed to find GPUs with Vulkan support!");
         }
 
         /** Get the device list */
-        std::vector<VkPhysicalDevice> devices(deviceCount);
+        vector<VkPhysicalDevice> devices(deviceCount);
         vkEnumeratePhysicalDevices(instance, &deviceCount, devices.data());
 
         cout << "Considering available devices (" << deviceCount << "): " << endl;
@@ -126,9 +185,16 @@ private:
         }
 
         if (physicalDevice == VK_NULL_HANDLE) {
-            throw std::runtime_error("failed to find a suitable GPU!");
+            throw runtime_error("failed to find a suitable GPU!");
         }
 
+    }
+
+
+    void createSurface() {
+        if (glfwCreateWindowSurface(instance, window, nullptr, surface.replace()) != VK_SUCCESS) {
+            throw runtime_error("failed to create window surface!");
+        }
     }
 
 
@@ -137,7 +203,7 @@ private:
 
         /** First we want to check if validation layers are available */
         if (enableValidationLayers && !checkValidationLayerSupport()) {
-            throw std::runtime_error("validation layers requested, but not available!");
+            throw runtime_error("validation layers requested, but not available!");
         }
 
         /** Create a Vk application info*/
@@ -169,7 +235,7 @@ private:
 
         /** Finally attempt to create a Vk Instance... */
         if (vkCreateInstance(&createInfo, nullptr, instance.replace()) != VK_SUCCESS) {
-            throw std::runtime_error("failed to create instance!");
+            throw runtime_error("failed to create instance!");
         }
 
     }
@@ -189,13 +255,13 @@ private:
         createInfo.pfnCallback = debugCallback;
 
         if (CreateDebugReportCallbackEXT(instance, &createInfo, nullptr, callback.replace()) != VK_SUCCESS) {
-            throw std::runtime_error("failed to set up debug callback!");
+            throw runtime_error("failed to set up debug callback!");
         }
     }
 
 
-    std::vector<const char*> getRequiredExtensions() {
-        std::vector<const char*> extensions;
+    vector<const char*> getRequiredExtensions() {
+        vector<const char*> extensions;
 
         unsigned int glfwExtensionCount = 0;
         const char** glfwExtensions;
@@ -215,44 +281,57 @@ private:
         return extensions;
     }
 
-
     bool isDeviceSuitable(VkPhysicalDevice device) {
         VkPhysicalDeviceProperties devProps;
         VkPhysicalDeviceFeatures devFeatures;
-
         vkGetPhysicalDeviceProperties(device, &devProps);
         vkGetPhysicalDeviceFeatures(device, &devFeatures);
 
         cout << "\t" << devProps.deviceName << endl;
 
-        return true;
+        QueueFamilyIndices indices = findQueueFamilies(device);
+        return indices.isComplete();
     }
 
 
     QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device) {
         QueueFamilyIndices indices;
 
-        /** First find out the amount of queue families */
         uint32_t queueFamilyCount = 0;
         vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, nullptr);
 
-        /** Then the exact items of queue families */
-        std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
+        vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
         vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, queueFamilies.data());
 
+        int i = 0;
+        for (const auto& queueFamily : queueFamilies) {
+            if (queueFamily.queueCount > 0 && queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT) {
+                indices.graphicsFamily = i;
+            }
 
+            VkBool32 presentSupport = false;
+            vkGetPhysicalDeviceSurfaceSupportKHR(device, i, surface, &presentSupport);
+
+            if (queueFamily.queueCount > 0 && presentSupport) {
+                indices.presentFamily = i;
+            }
+
+            if (indices.isComplete()) {
+                break;
+            }
+
+            i++;
+        }
 
         return indices;
     }
-
-
 
 
     bool checkValidationLayerSupport() {
         uint32_t layerCount;
         vkEnumerateInstanceLayerProperties(&layerCount, nullptr);
 
-        std::vector<VkLayerProperties> availableLayers(layerCount);
+        vector<VkLayerProperties> availableLayers(layerCount);
         vkEnumerateInstanceLayerProperties(&layerCount, availableLayers.data());
 
         for (const char* layerName : validationLayers) {
@@ -283,7 +362,7 @@ private:
                                                             const char* msg,
                                                             void* userData) {
 
-        std::cerr << "validation layer: " << msg << std::endl;
+        cerr << "validation layer: " << msg << endl;
         return VK_FALSE;
     }
 
